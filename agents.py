@@ -1,5 +1,9 @@
 import os
+import random
+
+import httpx
 from dotenv import load_dotenv
+from tenacity import retry, retry_if_exception, stop_after_attempt
 
 # LangChain Agent factory function
 from langchain.agents import create_agent
@@ -20,9 +24,53 @@ from tools import web_search, scrape_url
 load_dotenv()
 
 
+def _is_retryable_error(exc: BaseException) -> bool:
+    """Retry only on rate limits (429) and server errors (5xx)."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return status == 429 or 500 <= status <= 599
+    return isinstance(exc, (httpx.RequestError, httpx.StreamError))
+
+
+def _retry_wait(retry_state) -> float:
+    """Honor Mistral's Retry-After header, otherwise use exponential backoff."""
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    if isinstance(exc, httpx.HTTPStatusError):
+        retry_after = exc.response.headers.get("retry-after")
+        if retry_after:
+            try:
+                return min(float(retry_after), 60.0)
+            except ValueError:
+                pass
+    return min(2 ** (retry_state.attempt_number - 1), 60.0) + random.uniform(0, 1)
+
+
+class ResilientChatMistralAI(ChatMistralAI):
+    """ChatMistralAI that also retries HTTP 429 / 5xx errors with backoff.
+
+    langchain-mistralai only retries network/stream errors, so a single 429
+    from Mistral otherwise aborts the whole pipeline.
+    """
+
+    def completion_with_retry(self, run_manager=None, **kwargs):
+        @retry(
+            reraise=True,
+            retry=retry_if_exception(_is_retryable_error),
+            wait=_retry_wait,
+            stop=stop_after_attempt(self.max_retries + 1),
+        )
+        def _call():
+            return super(ResilientChatMistralAI, self).completion_with_retry(
+                run_manager=run_manager, **kwargs
+            )
+
+        return _call()
+
+
 # Initialize the primary Large Language Model (Mistral Small)
-llm = ChatMistralAI(
-    model="mistral-small-2506"
+llm = ResilientChatMistralAI(
+    model="mistral-small-2506",
+    max_retries=6,
 )
 
 
