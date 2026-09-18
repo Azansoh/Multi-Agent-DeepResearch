@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from langchain.tools import tool
 from langchain_community.tools.tavily_search import TavilySearchResults
+from tavily import TavilyClient
 
 load_dotenv()
 
@@ -12,6 +13,8 @@ tavily = TavilySearchResults(
     max_results=5,
     api_key=os.getenv("TAVILY_API_KEY")
 )
+
+_tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 
 @tool
 def web_search(query: str) -> str:
@@ -32,13 +35,27 @@ def web_search(query: str) -> str:
 @tool
 def scrape_url(url: str)-> str:
     "Scrape and return clean text content from a given  URL for deeper reading"
+    # 1) Try Tavily's extractor first; it handles JavaScript-heavy sites that
+    #    plain HTTP requests often cannot read.
     try:
-        resp=requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
-        soup=BeautifulSoup(resp.text, "html.parser")
-        for tag in soup(["script", "style","nav", "footer"]):
+        response = _tavily_client.extract(urls=[url], extract_depth="basic")
+        results = response.get("results") or []
+        if results:
+            content = (results[0].get("raw_content") or "").strip()
+            if content:
+                return content[:3000]
+        return f"Could not scrape URL: Tavily returned no content for {url}"
+    except Exception:
+        pass
+
+    # 2) Fallback: plain HTTP + BeautifulSoup
+    try:
+        resp = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        soup = BeautifulSoup(resp.text, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer"]):
             tag.decompose()
         return soup.get_text(separator=" ", strip=True)[:3000]
     except Exception as e:
-        return f"Could not scrape URL:{str(e)}"
+        return f"Could not scrape URL: {str(e)}"
 
 

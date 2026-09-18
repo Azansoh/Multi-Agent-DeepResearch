@@ -18,12 +18,21 @@ _REFUSAL_PHRASES = [
     "provide the full link",
     "please provide the",
     "could you please provide",
+    "could you provide",
+    "please share the",
     "doesn't include an actual url",
+    "don't include an actual url",
     "no url was provided",
     "no url",
+    "unable to locate",
+    "unable to find",
+    "can't perform",
+    "cannot perform",
+    "i'd be happy to",
     "cannot scrape",
     "unable to scrape",
     "could not scrape",
+    "no content",
 ]
 
 
@@ -125,36 +134,51 @@ if submitted:
             progress.progress(30, text="Search complete.")
 
             # --- Step 2: Reader ---
-            status_box.info("Step 2/4 — 📖 Reader agent is scraping the best source...")
-            reader_agent = build_reader_agent()
-            reader_result = reader_agent.invoke(
-                {
-                    "messages": [
-                        (
-                            "user",
-                            f"Scrape detailed content from a real URL in the search results below.\n\n"
-                            f"STRICT RULES:\n"
-                            f"1. You MUST call the scrape_url tool with a real URL from the list. "
-                            f"Never reply in plain text and never ask the user for a URL.\n"
-                            f"2. Prefer the most relevant URL; otherwise use the first valid 'URL:' entry.\n"
-                            f"3. Report back the scraped text returned by the tool.\n\n"
-                            f"Search Results about '{topic}':\n{state['search_results'][:4000]}",
-                        )
-                    ]
-                }
+            status_box.info("Step 2/4 — 📖 Reader is picking and scraping the best source...")
+            from tools import scrape_url as scrape_url_tool
+
+            # Collect candidate URLs from ALL agent messages, not just the final
+            # summary, so the raw web-search tool output URLs are always available.
+            all_messages_text = "\n".join(
+                str(m.content) for m in search_result["messages"] if m.content
             )
-            state["scraped_content"] = str(reader_result["messages"][-1].content)
+            candidate_urls = _extract_urls(all_messages_text)
 
-            # Fallback: if the reader refused to scrape or returned nothing useful,
-            # scrape the first candidate URL found in the search results directly.
-            if not _looks_scraped(state["scraped_content"]):
-                from tools import scrape_url as scrape_url_tool
+            # Deterministic scraping first: try candidate URLs directly until one
+            # returns real content. This never depends on the LLM deciding to call
+            # the tool.
+            scraped_content = ""
+            for url in candidate_urls[:5]:
+                try:
+                    result = str(scrape_url_tool.invoke({"url": url}))
+                except Exception:
+                    continue
+                if _looks_scraped(result):
+                    scraped_content = result
+                    break
 
-                for url in _extract_urls(state["search_results"]):
-                    result = scrape_url_tool.invoke({"url": url})
-                    if _looks_scraped(result):
-                        state["scraped_content"] = result
-                        break
+            # Last resort: let the reader agent scrape (relies on tool calling).
+            if not _looks_scraped(scraped_content):
+                reader_agent = build_reader_agent()
+                reader_result = reader_agent.invoke(
+                    {
+                        "messages": [
+                            (
+                                "user",
+                                f"Scrape detailed content from a real URL in the search results below.\n\n"
+                                f"STRICT RULES:\n"
+                                f"1. You MUST call the scrape_url tool with a real URL from the list. "
+                                f"Never reply in plain text and never ask the user for a URL.\n"
+                                f"2. Prefer the most relevant URL; otherwise use the first valid 'URL:' entry.\n"
+                                f"3. Report back the scraped text returned by the tool.\n\n"
+                                f"Search Results about '{topic}':\n{state['search_results'][:4000]}",
+                            )
+                        ]
+                    }
+                )
+                scraped_content = str(reader_result["messages"][-1].content)
+
+            state["scraped_content"] = scraped_content
             progress.progress(55, text="Reading complete.")
 
             # --- Step 3: Writer ---
