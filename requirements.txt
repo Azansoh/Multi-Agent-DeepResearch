@@ -6,8 +6,13 @@ langchain-core
 langchain-community
 
 # ==============================
-# Mistral AI Integration
+# LLM Providers
 # ==============================
+# Google Gemini / AI Studio (recommended free tier)
+langchain-google-genai
+# Groq (free tier)
+langchain-groq
+# Mistral (kept as a fallback)
 langchain-mistralai
 mistralai
 

@@ -67,11 +67,56 @@ class ResilientChatMistralAI(ChatMistralAI):
         return _call()
 
 
-# Initialize the primary Large Language Model (Mistral Small)
-llm = ResilientChatMistralAI(
-    model="mistral-small-2506",
-    max_retries=6,
-)
+# ==========================================
+# LLM PROVIDER SELECTION
+# ==========================================
+# Chooses a provider from whichever API key is available. Gemini (Google AI
+# Studio) is preferred because its free tier is the most forgiving for
+# multi-step agents. Set LLM_PROVIDER to "google", "groq" or "mistral" to force
+# a specific provider.
+
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-small-2506")
+
+
+def _build_llm():
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+
+    if provider in ("google", "gemini") or (
+        not provider and os.getenv("GOOGLE_API_KEY")
+    ):
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        return ChatGoogleGenerativeAI(
+            model=GEMINI_MODEL,
+            temperature=0.7,
+            max_retries=6,
+        )
+
+    if provider == "groq" or (not provider and os.getenv("GROQ_API_KEY")):
+        from langchain_groq import ChatGroq
+
+        return ChatGroq(
+            model=GROQ_MODEL,
+            temperature=0.7,
+            max_retries=6,
+        )
+
+    if provider == "mistral" or os.getenv("MISTRAL_API_KEY"):
+        return ResilientChatMistralAI(
+            model=MISTRAL_MODEL,
+            max_retries=6,
+        )
+
+    raise RuntimeError(
+        "No LLM API key found. Set GOOGLE_API_KEY (recommended), GROQ_API_KEY "
+        "or MISTRAL_API_KEY in your Streamlit secrets or local .env file."
+    )
+
+
+# Initialize the primary Large Language Model
+llm = _build_llm()
 
 
 # Function to create an Agent equipped with the web search tool
