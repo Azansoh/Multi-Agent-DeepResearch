@@ -11,7 +11,10 @@ def run_research_pipeline(topic: str) -> dict:
 
     search_agent = build_search_agent()
     search_result = search_agent.invoke({
-        "messages": [("user", f"Find recent, reliable and detailed information about: {topic}")]
+        "messages": [("user",
+            f"Find recent, reliable and detailed information about: {topic}. "
+            f"In your final answer, include the key facts AND every source URL "
+            f"you found, one per line, each prefixed with 'URL:'. Do not omit any URL.")]
     })
 
     # Fixed key to 'search_results' (plural)
@@ -27,9 +30,13 @@ def run_research_pipeline(topic: str) -> dict:
     reader_result = reader_agent.invoke({
         "messages": [(
             "user",
-            f"Based on the following search results about '{topic}', "
-            f"pick the most relevant URL and scrape it for deeper content.\n\n"
-            f"Search Results:\n{state['search_results'][:800]}"
+            f"Scrape detailed content from a real URL in the search results below.\n\n"
+            f"STRICT RULES:\n"
+            f"1. You MUST call the scrape_url tool with a real URL from the list. "
+            f"Never reply in plain text and never ask the user for a URL.\n"
+            f"2. Prefer the most relevant URL; otherwise use the first valid 'URL:' entry.\n"
+            f"3. Report back the scraped text returned by the tool.\n\n"
+            f"Search Results about '{topic}':\n{state['search_results'][:4000]}"
         )]
     })
 
